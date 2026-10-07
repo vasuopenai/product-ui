@@ -1,0 +1,10 @@
+# The UI on its own. The API runs separately (the product-langflow project);
+# by default the container reaches it on the host at port 8000.
+#   docker compose up -d --build    # then open http://127.0.0.1:8501
+services:
+  ui:
+    build: .
+    environment:
+      API_URL: ${API_URL:-http://host.docker.internal:8000}
+    ports: ["127.0.0.1:8501:8501"]   # local machine only
+    extra_hosts: ["host.docker.internal:host-gateway"]

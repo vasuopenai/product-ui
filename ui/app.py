@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui import client, formatting as fmt, kroger as kr, wholefoods as wf  # noqa: E402
+from ui import client, formatting as fmt, kroger as kr, review as rv, wholefoods as wf  # noqa: E402
 
 EXAMPLES = Path(os.getenv("EXAMPLES_DIR", ROOT / "examples"))
 HISTORY_SIZE = 8
@@ -197,7 +197,8 @@ def show_result(item):
 
 # --- tabs ---------------------------------------------------------------------
 
-ask_tab, search_tab, wf_tab, kroger_tab = st.tabs(["Ask", "Search by filters", "Whole Foods", "Kroger"])
+ask_tab, search_tab, wf_tab, kroger_tab, review_tab = st.tabs(
+    ["Ask", "Search by filters", "Whole Foods", "Kroger", "Review"])
 
 with ask_tab:
     questions = fmt.load_questions(EXAMPLES / "questions.txt")
@@ -288,6 +289,117 @@ with wf_tab:
                 st.rerun()
             nav[2].caption(f"{result['total']:,} products · page {st.session_state['wf-page']} of {n_pages}")
             show_products(result["products"], key="wf")
+
+
+def _review_number(value):
+    return None if value in (None, "") else float(value)
+
+
+with review_tab:
+    st.markdown("Barcodes scanned in the app that aren't in the product store yet. Each was researched "
+                "(USDA live, Open Food Facts, Kroger, web search); approve to add it to the store, "
+                "where it becomes searchable.")
+    c1, c2 = st.columns([3, 1])
+    rv_url = c1.text_input("Mobile gateway URL", value=os.getenv("MOBILE_API_URL", rv.DEFAULT_URL),
+                           key="rv-url").strip()
+    rv_key = c2.text_input("Admin key", value=os.getenv("MOBILE_ADMIN_KEY", ""), type="password",
+                           key="rv-key").strip() or None
+    status = st.selectbox("Status", rv.STATUSES, key="rv-status")
+    try:
+        q = rv.queue(rv_url, status, rv_key)
+    except client.ApiError as e:
+        st.error(str(e))
+        q = None
+    if q is not None:
+        counts = q.get("counts") or {}
+        st.caption(" · ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "Queue is empty.")
+        entries = q.get("items") or []
+        if not entries:
+            st.info(f"No {status} products.")
+        else:
+            labels = {rv.label(e): e["barcode"] for e in entries}
+            barcode = labels[st.selectbox("Product", list(labels), key="rv-pick")]
+            try:
+                entry = rv.item(rv_url, barcode, rv_key)
+            except client.ApiError as e:
+                st.error(str(e))
+                entry = None
+            if entry:
+                draft = entry.get("draft") or {}
+                st.markdown(f"**Barcode** {entry['barcode']} · **status** {entry['status']} · "
+                            f"**confidence** {entry.get('confidence') or '—'} · **scans** {entry['scan_count']}")
+                if entry.get("error"):
+                    st.warning(f"Research problems: {entry['error']}")
+                left, right = st.columns([1, 2])
+                if draft.get("image_url"):
+                    left.image(draft["image_url"], width="stretch")
+                rows = rv.source_rows(entry)
+                if rows:
+                    right.markdown("**Sources**")
+                    right.dataframe(rows, hide_index=True,
+                                    column_config={"link": st.column_config.LinkColumn("link", display_text="open")})
+                web = (entry.get("sources") or {}).get("web") or {}
+                evidence = (web.get("raw") or {}).get("evidence")
+                if evidence:
+                    right.caption("Web evidence: " + evidence)
+
+                with st.form(f"rv-form-{barcode}"):
+                    values = {}
+                    cols = st.columns(2)
+                    for i, (field, title) in enumerate(rv.TEXT_FIELDS):
+                        src = rv.field_source(entry, field)
+                        values[field] = cols[i % 2].text_input(
+                            title + (f" · {src}" if src else ""), value=draft.get(field) or "",
+                            key=f"rv-{barcode}-{field}")
+                    src = rv.field_source(entry, "ingredients")
+                    values["ingredients"] = st.text_area("Ingredients" + (f" · {src}" if src else ""),
+                                                         value=draft.get("ingredients") or "", height=110,
+                                                         key=f"rv-{barcode}-ingredients")
+                    s1, s2 = st.columns(2)
+                    serving = draft.get("serving_size_g")
+                    values["serving_size_g"] = _review_number(s1.text_input(
+                        "Serving size", value="" if serving is None else f"{serving:g}",
+                        key=f"rv-{barcode}-serving"))
+                    units = ["g", "ml"]
+                    unit = draft.get("serving_unit") if draft.get("serving_unit") in units else "g"
+                    values["serving_unit"] = s2.selectbox("Serving unit", units, index=units.index(unit),
+                                                          key=f"rv-{barcode}-unit")
+                    st.markdown("**Nutrition per 100 g / 100 ml**")
+                    nut = draft.get("nutrients_100g") or {}
+                    values["nutrients_100g"] = {}
+                    ncols = st.columns(4)
+                    for i, (n, title) in enumerate(rv.NUTRIENTS):
+                        src = rv.field_source(entry, f"nutrients_100g.{n}")
+                        raw = ncols[i % 4].text_input(title, value="" if nut.get(n) is None else f"{nut[n]:g}",
+                                                      help=f"from {src}" if src else None,
+                                                      key=f"rv-{barcode}-{n}")
+                        values["nutrients_100g"][n] = _review_number(raw)
+                    note = st.text_input("Review note (optional)", key=f"rv-{barcode}-note")
+                    b1, b2, b3 = st.columns(3)
+                    do_approve = b1.form_submit_button("Approve and add", type="primary", width="stretch",
+                                                       disabled=entry["status"] in ("approved", "researching"))
+                    do_reject = b2.form_submit_button("Reject", width="stretch",
+                                                      disabled=entry["status"] == "rejected")
+                    do_research = b3.form_submit_button("Research again", width="stretch")
+                try:
+                    if do_approve:
+                        done = rv.approve(rv_url, barcode, rv.edits(draft, values), note or None, rv_key)
+                        product = done["product"]
+                        st.success(f"Added to the product store: {product['name']} ({product['code']})")
+                    elif do_reject:
+                        rv.reject(rv_url, barcode, note or None, rv_key)
+                        st.success("Rejected.")
+                    elif do_research:
+                        rv.research(rv_url, barcode, rv_key)
+                        st.info("Researching again - pick status 'researching', or come back in a minute.")
+                except (client.ApiError, ValueError) as e:
+                    st.error(str(e))
+
+                with st.expander("Scans"):
+                    st.dataframe(entry.get("events") or [], hide_index=True)
+                with st.expander("Raw source answers"):
+                    st.json({k: (v or {}).get("raw") for k, v in (entry.get("sources") or {}).items()},
+                            expanded=False)
 
 
 def _refresh_kroger():

@@ -81,3 +81,12 @@ port 8001; set `KROGER_API_URL` or edit it in the sidebar), results show Kroger
 price, sale, aisle and stock for the chosen store, with a "Sold at Kroger only"
 toggle. The **Kroger** tab picks the store and runs optional bulk loads/refreshes
 by category. Barcodes are looked up on demand and cached by the service.
+
+## Whole Foods
+
+The **Whole Foods** tab lists the ~3,000 products Whole Foods Market reports to USDA
+under its own brands (365, Whole Foods Market, Engine 2, ...), from product-langflow's
+wholefoods service (`docker compose up -d --build wholefoods`, port 8002; set
+`WHOLEFOODS_API_URL` or edit it in the tab). Search name or ingredients, filter by
+brand and category, and page through; Kroger prices show here too when that
+service is running.

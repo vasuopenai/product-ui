@@ -62,7 +62,7 @@ def price_text(item):
     if not item:
         return ""
     if not item.get("sold"):
-        return "not sold at Kroger"
+        return "not carried at this store" if item.get("in_catalog") else "not sold at Kroger"
     parts = []
     if item.get("price") is not None:
         price = f"${item['price']:.2f}"

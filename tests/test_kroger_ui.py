@@ -15,6 +15,7 @@ def test_price_text():
     assert kr.price_text({"sold": True, "price": 2.5}) == "$2.50"
     assert kr.price_text({"sold": True}) == "sold at Kroger"
     assert kr.price_text({"sold": False}) == "not sold at Kroger"
+    assert kr.price_text({"sold": False, "in_catalog": True}) == "not carried at this store"
     assert kr.price_text(None) == ""
 
 

@@ -73,3 +73,11 @@ import) and are tested in `tests/test_ui.py`:
 ```powershell
 .venv\Scripts\python -m pytest -q tests
 ```
+
+## Kroger
+
+With product-langflow's Kroger service running (`docker compose up -d --build kroger`,
+port 8001; set `KROGER_API_URL` or edit it in the sidebar), results show Kroger
+price, sale, aisle and stock for the chosen store, with a "Sold at Kroger only"
+toggle. The **Kroger** tab picks the store and runs optional bulk loads/refreshes
+by category. Barcodes are looked up on demand and cached by the service.

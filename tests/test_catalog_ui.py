@@ -24,6 +24,7 @@ def test_table_rows_mark_membership():
     row = cg.table_rows([{"barcode": "36000291452", "brand": "B", "name": "New Chips", "in_usda": False,
                           "in_off": True, "in_off_us": False, "in_app": False, "review_status": "queued"}])[0]
     assert (row["USDA"], row["OFF"], row["In app"], row["review"]) == ("✗", "✓", "✗", "queued")
+    assert row["Kroger info"] == ""
 
 
 def test_calls_send_filters_and_admin_key():

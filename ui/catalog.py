@@ -69,4 +69,5 @@ def table_rows(items):
     return [{"photo": i.get("image_url"), "barcode": i["barcode"], "brand": i.get("brand"), "name": i.get("name"),
              "size": i.get("size"), "Kroger category": i.get("category"), "USDA": _mark(i["in_usda"]),
              "OFF": _mark(i["in_off"]), "OFF (US)": _mark(i["in_off_us"]), "In app": _mark(i["in_app"]),
-             "review": i.get("review_status") or ""} for i in items]
+             "Kroger info": i.get("kroger_info") or "", "review": i.get("review_status") or "",
+             "ingredients (Kroger)": i.get("ingredients") or ""} for i in items]

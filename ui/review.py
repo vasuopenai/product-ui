@@ -10,7 +10,7 @@ from . import client
 
 DEFAULT_URL = "http://127.0.0.1:8003"
 HINT = "(docker compose up -d --build mobile in product-langflow)"
-STATUSES = ["pending", "researching", "not_found", "error", "approved", "rejected"]
+STATUSES = ["pending", "queued", "researching", "not_found", "error", "approved", "rejected"]
 TEXT_FIELDS = [("name", "Name"), ("brand", "Brand"), ("brand_owner", "Brand owner"), ("category", "Category"),
                ("package_size", "Package size"), ("serving_text", "Serving (as printed)"),
                ("image_url", "Image URL")]

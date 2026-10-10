@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui import client, formatting as fmt, kroger as kr, review as rv, wholefoods as wf  # noqa: E402
+from ui import catalog as cg, client, formatting as fmt, kroger as kr, review as rv, wholefoods as wf  # noqa: E402
 
 EXAMPLES = Path(os.getenv("EXAMPLES_DIR", ROOT / "examples"))
 HISTORY_SIZE = 8
@@ -197,8 +197,8 @@ def show_result(item):
 
 # --- tabs ---------------------------------------------------------------------
 
-ask_tab, search_tab, wf_tab, kroger_tab, review_tab = st.tabs(
-    ["Ask", "Search by filters", "Whole Foods", "Kroger", "Review"])
+ask_tab, search_tab, wf_tab, kroger_tab, review_tab, gaps_tab = st.tabs(
+    ["Ask", "Search by filters", "Whole Foods", "Kroger", "Review", "Catalog gaps"])
 
 with ask_tab:
     questions = fmt.load_questions(EXAMPLES / "questions.txt")
@@ -400,6 +400,92 @@ with review_tab:
                 with st.expander("Raw source answers"):
                     st.json({k: (v or {}).get("raw") for k, v in (entry.get("sources") or {}).items()},
                             expanded=False)
+
+with gaps_tab:
+    st.markdown("Kroger catalog products (crawled through Kroger's API) checked against the full USDA "
+                "Branded Foods list, the full Open Food Facts list and our app. Uses the gateway URL and "
+                "admin key from the Review tab.")
+    try:
+        gr = cg.report(rv_url, rv_key)
+    except client.ApiError as e:
+        st.error(str(e))
+        gr = None
+    if gr is not None:
+        total = gr.get("kroger_food_products") or 0
+        if cg.missing_refs(gr):
+            st.warning("Reference lists not loaded yet (" + ", ".join(cg.missing_refs(gr)) + "): run "
+                       "`python -m catalog_gaps build-refs` and `lightsail.sh push-refs`. Until then those "
+                       "columns read 'not in'.")
+        if not total:
+            st.info("Nothing crawled yet. Start the crawler: `python -m catalog_gaps run` "
+                    "(or COMPOSE_PROFILES=catalog on the server).")
+        else:
+            cols = st.columns(len(cg.HEADLINE) + 1)
+            cols[0].metric("Kroger food products", f"{total:,}")
+            for col, (label, n, share) in zip(cols[1:], cg.headline(gr)):
+                col.metric(f"{label} ({share})", f"{n:,}")
+            excluded = gr.get("excluded") or {}
+            refs = gr.get("refs") or {}
+            st.caption(
+                ("Set aside: " + ", ".join(f"{v:,} {k.replace('_', ' ')}" for k, v in excluded.items()) + ". "
+                 if excluded else "")
+                + " · ".join(f"{n.upper()} list: {v['rows']:,} barcodes, built {v['built_at']}" for n, v in refs.items()))
+
+            left, right = st.columns([2, 3])
+            with left:
+                st.markdown("**USDA × Open Food Facts**")
+                st.dataframe(cg.matrix_rows(gr), hide_index=True)
+            with right:
+                st.markdown("**Missing from USDA, by Kroger category**")
+                cats = [c for c in gr.get("by_category") or [] if c["not_in_usda"]]
+                if cats:
+                    st.bar_chart({c["category"]: c["not_in_usda"] for c in cats}, horizontal=True)
+            with st.expander("Brands with the most products missing from USDA"):
+                st.dataframe(gr.get("top_brands_not_in_usda") or [], hide_index=True)
+
+            st.subheader("Products")
+            options = cg.group_options(gr)
+            f1, f2, f3, f4 = st.columns([3, 2, 2, 2])
+            group = options[f1.selectbox("Show", list(options), index=1 if len(options) > 1 else 0, key="cg-group")]
+            cat_names = ["All categories"] + [f"{c['category']}" for c in gr.get("categories") or []]
+            category = f2.selectbox("Kroger category", cat_names, key="cg-cat")
+            category = None if category == "All categories" else category
+            brand = f3.text_input("Brand contains", key="cg-brand").strip() or None
+            q = f4.text_input("Name or barcode", key="cg-q").strip() or None
+            page_size = 50
+            p1, p2 = st.columns([1, 5])
+            page_no = int(p1.number_input("Page", min_value=1, value=1, key="cg-page"))
+            try:
+                page = cg.products(rv_url, group, category, brand, q, limit=page_size,
+                                   offset=(page_no - 1) * page_size, admin_key=rv_key)
+                pages = max(1, -(-page["total"] // page_size))
+                if page_no > pages:
+                    p2.caption(f"Only {pages} page(s) for these filters.")
+                else:
+                    p2.caption(f"{page['total']:,} products · page {page_no} of {pages}")
+                st.dataframe(cg.table_rows(page["items"]), hide_index=True, use_container_width=True,
+                             column_config={"photo": st.column_config.ImageColumn("photo", width="small")})
+            except client.ApiError as e:
+                st.error(str(e))
+
+            st.subheader("Add to the review queue")
+            if not group:
+                st.caption("Pick a group under Show (for example 'not in the USDA database') to add it.")
+            else:
+                st.caption("Adds the products matching the filters above (group, category, brand) to the Review tab "
+                           "as 'queued', from the stored Kroger records; no new crawl. Products already in the "
+                           "queue are left alone. Research them from the Review tab.")
+                s1, s2, s3 = st.columns([1, 1, 3])
+                limit = s1.number_input("At most", min_value=1, max_value=10000, value=100, step=50, key="cg-limit")
+                try:
+                    would = cg.stage(rv_url, group, category, brand, int(limit), dry_run=True,
+                                     admin_key=rv_key)["would_stage"]
+                    s3.caption(f"{would:,} would be added.")
+                    if s2.button(f"Add {would:,}", disabled=not would, key="cg-stage"):
+                        done = cg.stage(rv_url, group, category, brand, int(limit), admin_key=rv_key)
+                        st.success(f"Added {done['staged']:,} to the review queue (Review tab, status 'queued').")
+                except client.ApiError as e:
+                    st.error(str(e))
 
 
 def _refresh_kroger():

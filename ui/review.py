@@ -100,3 +100,24 @@ def edits(original, values):
         elif (v or None) != (original.get(k) or None):
             out[k] = v
     return out
+
+
+# --- bulk approve ----------------------------------------------------------------------
+
+SOURCES = {"Kroger catalog": "kroger_catalog", "Phone scans": "scan", "Any": None}
+
+
+def bulk(url, status="queued", found_via="kroger_catalog", full_only=True, category=None, brand=None, limit=1000,
+         dry_run=True, sample=20, note=None, admin_key=None, session=None):
+    """Preview (dry_run) or approve staged products in bulk on the mobile gateway."""
+    payload = {"status": status, "found_via": found_via, "full_only": full_only, "category": category or None,
+               "brand": brand or None, "limit": int(limit), "dry_run": dry_run, "sample": sample, "note": note}
+    return _call(url, "POST", "/admin/review/bulk", payload, admin_key=admin_key, session=session, timeout=300)
+
+
+def sample_rows(sample):
+    fmt = lambda v, unit="": "" if v is None else f"{v:g}{unit}"
+    return [{"photo": s.get("image_url"), "barcode": s["barcode"], "brand": s.get("brand"), "name": s.get("name"),
+             "kcal /100g": fmt(s.get("energy_kcal")), "protein /100g": fmt(s.get("protein_g"), " g"),
+             "sugars /100g": fmt(s.get("sugars_g"), " g"), "sodium /100g": fmt(s.get("sodium_mg"), " mg"),
+             "serving": s.get("serving") or "", "ingredients": s.get("ingredients") or ""} for s in sample]

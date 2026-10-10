@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui import client, formatting as fmt  # noqa: E402
+from ui import client, formatting as fmt, kroger as kr  # noqa: E402
 
 EXAMPLES = Path(os.getenv("EXAMPLES_DIR", ROOT / "examples"))
 HISTORY_SIZE = 8
@@ -48,7 +48,32 @@ with st.sidebar:
         st.success(f"Healthy — {n:,} products" if isinstance(n, int) else "Healthy")
     st.caption("Use 127.0.0.1 rather than localhost on Windows.")
 
+
+@st.cache_data(ttl=10, show_spinner=False)
+def kroger_status(url):
+    try:
+        return kr.health(url), None
+    except client.ApiError as e:
+        return None, str(e)
+
+
+with st.sidebar:
+    st.header("Kroger")
+    kroger_url = st.text_input("Kroger service URL", value=os.getenv("KROGER_API_URL", kr.DEFAULT_URL)).strip()
+    kstatus, kerror = kroger_status(kroger_url)
+    if kerror:
+        st.caption("Kroger service not reachable — Kroger prices are hidden.")
+    elif not kstatus.get("configured"):
+        st.warning("Kroger API keys not set (see the Kroger tab).")
+    elif not kstatus.get("location_id"):
+        st.info("Choose a Kroger store in the Kroger tab.")
+    else:
+        st.success(f"Store: {kstatus.get('location_name')}")
+    kroger_ready = bool(kstatus and kstatus.get("location_id"))
+    kroger_live = bool(kroger_ready and kstatus.get("configured"))
+
 history = st.session_state.setdefault("history", [])
+kroger_cache = st.session_state.setdefault("kroger_items", {})  # barcode -> Kroger item
 
 
 def remember(kind, label, result, elapsed, spec=None):
@@ -70,22 +95,58 @@ def show_spec(spec):
         st.json(fmt.clean_spec(spec))
 
 
-def show_products(products):
+def kroger_items_for(products):
+    """Kroger info for the shown products: from this session's cache, else the
+    service (which looks unknown barcodes up live when keys and a store are set)."""
+    if not kroger_ready:
+        return {}
+    codes = [p["code"] for p in products if p.get("code")]
+    missing = [c for c in codes if c not in kroger_cache]
+    if missing:
+        try:
+            with st.spinner("Checking Kroger…"):
+                found = kr.items(kroger_url, missing, lookup=kroger_live)
+            kroger_cache.update(found.get("items", {}))
+            if found.get("lookup", {}).get("budget_reached"):
+                st.caption("Kroger daily call budget reached; showing cached Kroger data only.")
+            if found.get("lookup", {}).get("error"):
+                st.caption(f"Kroger lookup failed: {found['lookup']['error']}")
+        except client.ApiError as e:
+            st.caption(f"Kroger info unavailable: {e}")
+    return {c: kroger_cache[c] for c in codes if c in kroger_cache}
+
+
+def show_products(products, key="results"):
     if not products:
         st.info("No products returned.")
         return
+    kroger_items = kroger_items_for(products)
+    if kroger_items and st.toggle("Sold at Kroger only", key=f"kroger-only-{key}"):
+        products = kr.only_sold(products, kroger_items)
+        if not products:
+            st.info("None of these products are sold at the chosen Kroger store.")
+            return
     st.subheader(f"Products ({len(products)})")
+    rows = fmt.product_rows(products)
+    if kroger_items:
+        rows = kr.add_kroger_column(rows, products, kroger_items)
     st.dataframe(
-        fmt.product_rows(products),
+        rows,
         hide_index=True,
         column_config={"link": st.column_config.LinkColumn("link", display_text="open")},
     )
     for p in products:
+        kitem = kroger_items.get(p.get("code")) or {}
+        image = p.get("image_url") or (kitem.get("image_url") if kitem.get("sold") else None)
         with st.expander(fmt.product_title(p)):
-            cols = st.columns([1, 3]) if p.get("image_url") else [None, st.container()]
-            if p.get("image_url"):
-                cols[0].image(p["image_url"], width="stretch")
+            cols = st.columns([1, 3]) if image else [None, st.container()]
+            if image:
+                cols[0].image(image, width="stretch")
             body = cols[1]
+            if kitem:
+                text = kr.price_text(kitem)
+                as_of = (kitem.get("as_of") or "")[:10]
+                body.markdown(f"**Kroger:** {text}" + (f" _(as of {as_of})_" if as_of else ""))
             meta = []
             if p.get("serving_size"):
                 meta.append(f"**Serving:** {p['serving_size']}")
@@ -136,7 +197,7 @@ def show_result(item):
 
 # --- tabs ---------------------------------------------------------------------
 
-ask_tab, search_tab = st.tabs(["Ask", "Search by filters"])
+ask_tab, search_tab, kroger_tab = st.tabs(["Ask", "Search by filters", "Kroger"])
 
 with ask_tab:
     questions = fmt.load_questions(EXAMPLES / "questions.txt")
@@ -179,6 +240,90 @@ with search_tab:
                     remember("search", label, result, elapsed, spec)
                 except client.ApiError as e:
                     st.error(str(e))
+
+
+def _refresh_kroger():
+    kroger_status.clear()
+    kroger_cache.clear()
+
+
+@st.fragment(run_every="5s")
+def kroger_run_progress():
+    """Polls the latest run while one is in progress."""
+    try:
+        run = kr.latest_run(kroger_url)
+    except client.ApiError as e:
+        st.error(str(e))
+        return
+    if not run:
+        st.caption("No load has been run yet.")
+        return
+    stats = run.get("stats") or {}
+    text = f"**{run['mode']}** — {run['status']}: {run.get('message') or ''}"
+    (st.info if run["status"] == "running" else st.success if run["status"] == "done" else st.warning)(text)
+    if stats:
+        st.caption(" · ".join(f"{k.replace('_', ' ')}: {v:,}" if isinstance(v, int) else f"{k}: {v}"
+                              for k, v in stats.items()))
+
+
+with kroger_tab:
+    if kerror:
+        st.error(kerror)
+        st.markdown("Start it from product-langflow: `docker compose up -d --build kroger`")
+    else:
+        st.markdown("Kroger price, aisle and availability for the products shown, looked up **by barcode** "
+                    "for one Kroger store. Lookups happen on demand when results are shown; the load "
+                    "below is optional and pre-fills whole categories.")
+        st.markdown("\n".join(f"- **{k}:** {v}" for k, v in kr.status_lines(kstatus)))
+        st.button("Refresh status", on_click=_refresh_kroger)
+
+        st.subheader("1. Store")
+        if not kstatus.get("configured"):
+            st.info("Add `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` (free at developer.kroger.com, "
+                    "Products scope) to product-langflow's `.env`, then "
+                    "`docker compose up -d --build kroger`.")
+        else:
+            zip_code = st.text_input("ZIP code", max_chars=10, key="kroger-zip")
+            if st.button("Find stores") and zip_code.strip():
+                try:
+                    st.session_state["kroger_locations"] = kr.locations(kroger_url, zip_code.strip())
+                except client.ApiError as e:
+                    st.error(str(e))
+            locs = st.session_state.get("kroger_locations") or []
+            if locs:
+                labels = {f"{l['name']} — {l['address']} ({l['location_id']})": l for l in locs}
+                choice = st.selectbox("Store", list(labels))
+                if st.button("Use this store", type="primary"):
+                    loc = labels[choice]
+                    kr.choose_store(kroger_url, loc["location_id"], f"{loc['name']}, {loc['address']}")
+                    _refresh_kroger()
+                    st.rerun()
+
+        st.subheader("2. Load (optional) and refresh")
+        everything = st.checkbox("All products (about 425k barcodes, ~8,500 API calls over one or more days)")
+        cats = [] if everything else st.multiselect("Categories", kr.CATEGORIES, default=["cat:snacks"])
+        ready = kstatus.get("configured") and kstatus.get("location_id")
+        c1, c2 = st.columns(2)
+        for col, mode, label, help_text in (
+                (c1, "load", "Load", "Look up barcodes not checked yet (resumes after the daily limit)."),
+                (c2, "refresh", "Refresh prices", "Look up every barcode in scope again.")):
+            if col.button(label, disabled=not ready or (not everything and not cats), help=help_text,
+                          width="stretch"):
+                try:
+                    kr.start_run(kroger_url, mode, None if everything else cats)
+                    _refresh_kroger()
+                except client.ApiError as e:
+                    st.error(str(e))
+        kroger_run_progress()
+
+        st.subheader("Coverage")
+        try:
+            cov = kr.coverage(kroger_url)
+            st.caption(f"{cov['looked_up']:,} barcodes looked up, {cov['sold']:,} sold at the chosen store")
+            if cov["by_category"]:
+                st.dataframe(cov["by_category"], hide_index=True)
+        except client.ApiError as e:
+            st.caption(str(e))
 
 
 

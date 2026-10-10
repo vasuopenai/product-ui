@@ -22,7 +22,10 @@ def _detail(resp):
     return str(body)[:500]
 
 
-def call(base_url, method, path, payload=None, timeout=120, session=None):
+START_HINT = "(docker compose up -d --build api, or uvicorn off_products.api:app)"
+
+
+def call(base_url, method, path, payload=None, timeout=120, session=None, hint=START_HINT):
     """Call the API and return (json, elapsed_seconds); raise ApiError on any failure."""
     url = base_url.rstrip("/") + path
     http = session or requests
@@ -30,8 +33,7 @@ def call(base_url, method, path, payload=None, timeout=120, session=None):
     try:
         resp = http.request(method, url, json=payload, timeout=timeout)
     except requests.exceptions.ConnectionError:
-        raise ApiError(f"Cannot reach the API at {base_url}. Is it running? "
-                       "(docker compose up -d --build api, or uvicorn off_products.api:app)")
+        raise ApiError(f"Cannot reach the API at {base_url}. Is it running? {hint}")
     except requests.exceptions.Timeout:
         raise ApiError(f"The API at {base_url} did not answer within {timeout} s.")
     except requests.exceptions.RequestException as e:

@@ -90,3 +90,12 @@ wholefoods service (`docker compose up -d --build wholefoods`, port 8002; set
 `WHOLEFOODS_API_URL` or edit it in the tab). Search name or ingredients, filter by
 brand and category, and page through; Kroger prices show here too when that
 service is running.
+
+## Review
+
+The **Review** tab works through barcodes scanned in the mobile app that aren't in
+the product store (product-langflow's mobile gateway, `docker compose up -d --build mobile`,
+port 8003; set `MOBILE_API_URL`, and `MOBILE_ADMIN_KEY` when the gateway requires one).
+For each: what USDA, Open Food Facts, Kroger and web search found, which source each
+field came from, editable fields and nutrition, and Approve and add / Reject /
+Research again. Approved products become searchable immediately.

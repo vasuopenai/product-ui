@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui import client, formatting as fmt, kroger as kr  # noqa: E402
+from ui import client, formatting as fmt, kroger as kr, wholefoods as wf  # noqa: E402
 
 EXAMPLES = Path(os.getenv("EXAMPLES_DIR", ROOT / "examples"))
 HISTORY_SIZE = 8
@@ -197,7 +197,7 @@ def show_result(item):
 
 # --- tabs ---------------------------------------------------------------------
 
-ask_tab, search_tab, kroger_tab = st.tabs(["Ask", "Search by filters", "Kroger"])
+ask_tab, search_tab, wf_tab, kroger_tab = st.tabs(["Ask", "Search by filters", "Whole Foods", "Kroger"])
 
 with ask_tab:
     questions = fmt.load_questions(EXAMPLES / "questions.txt")
@@ -240,6 +240,54 @@ with search_tab:
                     remember("search", label, result, elapsed, spec)
                 except client.ApiError as e:
                     st.error(str(e))
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def wf_facets(url):
+    return wf.facets(url)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def wf_page(url, q, category, brand, page):
+    return wf.products(url, q, category, brand, page)
+
+
+with wf_tab:
+    st.markdown("Products Whole Foods Market reports to USDA under its own brands (365, Whole Foods "
+                "Market, Engine 2, Whole Catch, ...). National brands sold at Whole Foods aren't included.")
+    wf_url = st.text_input("Whole Foods service URL", value=os.getenv("WHOLEFOODS_API_URL", wf.DEFAULT_URL),
+                           key="wf-url").strip()
+    try:
+        options = wf_facets(wf_url)
+    except client.ApiError as e:
+        st.error(str(e))
+        options = None
+    if options:
+        c1, c2, c3 = st.columns([2, 1, 1])
+        q = c1.text_input("Search name or ingredients", key="wf-q").strip()
+        brands = wf.facet_options(options["brands"], "brand")
+        cats = wf.facet_options(options["categories"], "category")
+        brand = brands[c2.selectbox("Brand", list(brands), key="wf-brand")]
+        category = cats[c3.selectbox("Category", list(cats), key="wf-cat")]
+        filters = (q, category, brand)
+        if st.session_state.get("wf-filters") != filters:  # new filters start at page 1
+            st.session_state["wf-filters"], st.session_state["wf-page"] = filters, 1
+        try:
+            result = wf_page(wf_url, q or None, category, brand, st.session_state["wf-page"])
+        except client.ApiError as e:
+            st.error(str(e))
+            result = None
+        if result:
+            n_pages = wf.pages(result["total"])
+            nav = st.columns([1, 1, 4])
+            if nav[0].button("Previous", disabled=st.session_state["wf-page"] <= 1, key="wf-prev"):
+                st.session_state["wf-page"] -= 1
+                st.rerun()
+            if nav[1].button("Next", disabled=st.session_state["wf-page"] >= n_pages, key="wf-next"):
+                st.session_state["wf-page"] += 1
+                st.rerun()
+            nav[2].caption(f"{result['total']:,} products · page {st.session_state['wf-page']} of {n_pages}")
+            show_products(result["products"], key="wf")
 
 
 def _refresh_kroger():

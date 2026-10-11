@@ -304,6 +304,47 @@ with review_tab:
                            key="rv-url").strip()
     rv_key = c2.text_input("Admin key", value=os.getenv("MOBILE_ADMIN_KEY", ""), type="password",
                            key="rv-key").strip() or None
+
+    with st.expander("Bulk approve", expanded=False):
+        st.caption("Approve many queued products at once, as they are (their drafts). Preview first: check a "
+                   "random sample, then approve. Products with impossible nutrition are skipped and stay queued. "
+                   f"At most {1000:,} per click.")
+        b1, b2, b3 = st.columns(3)
+        b_status = b1.selectbox("Status", ["queued", "pending"], key="bk-status",
+                                help="queued: staged by the catalog crawl; pending: researched")
+        b_source = rv.SOURCES[b2.selectbox("Found via", list(rv.SOURCES), key="bk-source")]
+        b_full = b3.checkbox("Only full information (ingredients + nutrition per 100 g)", value=True, key="bk-full")
+        b4, b5, b6 = st.columns(3)
+        b_cat = b4.text_input("Category contains", key="bk-cat").strip() or None
+        b_brand = b5.text_input("Brand contains", key="bk-brand").strip() or None
+        b_limit = b6.number_input("At most", min_value=1, max_value=1000, value=1000, step=100, key="bk-limit")
+        filters = dict(status=b_status, found_via=b_source, full_only=b_full, category=b_cat, brand=b_brand)
+        if st.button("Preview", key="bk-preview"):
+            try:
+                st.session_state["bk-preview-result"] = (filters, rv.bulk(rv_url, **filters, admin_key=rv_key))
+            except client.ApiError as e:
+                st.error(str(e))
+        shown = st.session_state.get("bk-preview-result")
+        if shown and shown[0] == filters:  # only for the filters it was made with
+            preview = shown[1]
+            n = min(preview["matching"], int(b_limit))
+            st.markdown(f"**{preview['matching']:,} products match.** A random sample:")
+            st.dataframe(rv.sample_rows(preview["sample"]), hide_index=True, use_container_width=True,
+                         column_config={"photo": st.column_config.ImageColumn("photo", width="small")})
+            checked = st.checkbox("I've checked the sample", key="bk-checked")
+            if st.button(f"Approve {n:,}", disabled=not (checked and n), type="primary", key="bk-approve"):
+                try:
+                    with st.spinner(f"Approving {n:,}…"):
+                        done = rv.bulk(rv_url, **filters, limit=int(b_limit), dry_run=False, admin_key=rv_key)
+                    skipped = ", ".join(f"{v:,} {k}" for k, v in (done.get("skipped") or {}).items())
+                    st.success(f"Approved {done['approved']:,}." + (f" Skipped {skipped}." if skipped else "")
+                               + f" {done['still_matching']:,} still match.")
+                    st.session_state.pop("bk-preview-result", None)
+                except client.ApiError as e:
+                    st.error(str(e))
+        elif shown:
+            st.caption("Filters changed: preview again.")
+
     status = st.selectbox("Status", rv.STATUSES, key="rv-status")
     try:
         q = rv.queue(rv_url, status, rv_key)

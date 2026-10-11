@@ -42,3 +42,15 @@ def test_admin_key_header_and_paths():
     method, url, body, headers = s.calls[-1]
     assert (method, url) == ("POST", "http://m:8003/admin/review/811620022118/approve")
     assert body == {"edits": {"name": "x"}, "note": "ok"} and headers == {"X-Admin-Key": "k"}
+
+
+def test_bulk_payload_and_sample_rows():
+    s = HeaderSession({"matching": 2, "sample": []})
+    rv.bulk("http://gw", found_via="kroger_catalog", category="Snacks", limit=500, admin_key="k", session=s)
+    method, url, payload, headers = s.calls[0]
+    assert method == "POST" and url == "http://gw/admin/review/bulk" and headers == {"X-Admin-Key": "k"}
+    assert payload["dry_run"] is True and payload["limit"] == 500 and payload["category"] == "Snacks"
+    assert rv.SOURCES["Phone scans"] == "scan" and rv.SOURCES["Any"] is None
+    row = rv.sample_rows([{"barcode": "1", "name": "Almond Butter", "energy_kcal": 594.4, "protein_g": 21.94,
+                           "sodium_mg": None}])[0]
+    assert (row["kcal /100g"], row["protein /100g"], row["sodium /100g"]) == ("594", "21.9 g", "")

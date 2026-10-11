@@ -51,6 +51,6 @@ def test_bulk_payload_and_sample_rows():
     assert method == "POST" and url == "http://gw/admin/review/bulk" and headers == {"X-Admin-Key": "k"}
     assert payload["dry_run"] is True and payload["limit"] == 500 and payload["category"] == "Snacks"
     assert rv.SOURCES["Phone scans"] == "scan" and rv.SOURCES["Any"] is None
-    row = rv.sample_rows([{"barcode": "1", "name": "Almond Butter", "energy_kcal": 594, "protein_g": 21.9,
+    row = rv.sample_rows([{"barcode": "1", "name": "Almond Butter", "energy_kcal": 594.4, "protein_g": 21.94,
                            "sodium_mg": None}])[0]
     assert (row["kcal /100g"], row["protein /100g"], row["sodium /100g"]) == ("594", "21.9 g", "")

@@ -116,8 +116,8 @@ def bulk(url, status="queued", found_via="kroger_catalog", full_only=True, categ
 
 
 def sample_rows(sample):
-    fmt = lambda v, unit="": "" if v is None else f"{v:g}{unit}"
+    fmt = lambda v, unit="", digits=1: "" if v is None else f"{round(v, digits):g}{unit}"
     return [{"photo": s.get("image_url"), "barcode": s["barcode"], "brand": s.get("brand"), "name": s.get("name"),
-             "kcal /100g": fmt(s.get("energy_kcal")), "protein /100g": fmt(s.get("protein_g"), " g"),
-             "sugars /100g": fmt(s.get("sugars_g"), " g"), "sodium /100g": fmt(s.get("sodium_mg"), " mg"),
+             "kcal /100g": fmt(s.get("energy_kcal"), digits=0), "protein /100g": fmt(s.get("protein_g"), " g"),
+             "sugars /100g": fmt(s.get("sugars_g"), " g"), "sodium /100g": fmt(s.get("sodium_mg"), " mg", 0),
              "serving": s.get("serving") or "", "ingredients": s.get("ingredients") or ""} for s in sample]

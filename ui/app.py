@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ui import catalog as cg, client, formatting as fmt, kroger as kr, review as rv, wholefoods as wf  # noqa: E402
+from ui import catalog as cg, client, formatting as fmt, kroger as kr, review as rv, usage as us, wholefoods as wf  # noqa: E402
 
 EXAMPLES = Path(os.getenv("EXAMPLES_DIR", ROOT / "examples"))
 HISTORY_SIZE = 8
@@ -197,8 +197,8 @@ def show_result(item):
 
 # --- tabs ---------------------------------------------------------------------
 
-ask_tab, search_tab, wf_tab, kroger_tab, review_tab, gaps_tab = st.tabs(
-    ["Ask", "Search by filters", "Whole Foods", "Kroger", "Review", "Catalog gaps"])
+ask_tab, search_tab, wf_tab, kroger_tab, review_tab, gaps_tab, usage_tab = st.tabs(
+    ["Ask", "Search by filters", "Whole Foods", "Kroger", "Review", "Catalog gaps", "Usage"])
 
 with ask_tab:
     questions = fmt.load_questions(EXAMPLES / "questions.txt")
@@ -639,3 +639,31 @@ shown = st.session_state.get("shown")
 if shown:
     st.divider()
     show_result(shown)
+
+
+with usage_tab:
+    st.markdown("Who uses the app, counted per install: each phone gets a random ID on first launch (no names "
+                "or emails). Days are UTC. Uses the gateway URL and admin key from the Review tab.")
+    u_days = st.select_slider("Days shown", options=[7, 14, 30, 90], value=30, key="usage-days")
+    try:
+        ur = us.report(rv_url, u_days, rv_key)
+    except client.ApiError as e:
+        st.error(str(e))
+        ur = None
+    if ur is not None:
+        for col, (label, value) in zip(st.columns(5), us.headline(ur)):
+            col.metric(label, f"{value:,}")
+        if not ur.get("total_installs"):
+            st.info("No usage recorded yet. It's counted from the app's questions, scans, product views, store "
+                    "lookups and web searches once friends start using it.")
+        else:
+            daily = us.daily_rows(ur)
+            if daily:
+                st.subheader("Installs per day")
+                st.bar_chart(daily, x="day", y=["Active installs", "New installs"], stack=False)
+                st.subheader("Actions per day")
+                st.bar_chart(daily, x="day", y=[label for _, label in us.ACTIONS])
+            st.caption("All time: " + " · ".join(f"{label} {n:,}" for label, n in us.action_totals(ur)))
+            st.subheader("Installs")
+            st.caption("Install = a short code for one phone's random ID; the same phone keeps the same code.")
+            st.dataframe(us.install_rows(ur), hide_index=True, use_container_width=True)
